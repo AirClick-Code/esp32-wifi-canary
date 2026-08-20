@@ -41,7 +41,7 @@
   #define DEVKIT_LED_PIN 2
 #endif
 
-#define BUTTON_PIN  39
+#define BUTTON_PIN  0
 
 // ============================================================
 // CONFIGURATION
@@ -52,7 +52,7 @@
 #define BASELINE_SCAN_INTERVAL_MS  8000
 
 // Normal operation
-#define SCAN_INTERVAL_MS          20000
+#define SCAN_INTERVAL_MS           20000
 
 // Channel hop (promiscuous mode)
 static const uint8_t HOP_CHANNELS[]    = {1, 6, 11};
@@ -60,35 +60,25 @@ static const size_t  HOP_CHANNEL_COUNT = 3;
 #define CHANNEL_DWELL_MS           300
 
 // ── Deauth / disassoc burst ───────────────────────────────────
-#define DEAUTH_WINDOW_MS            5000
-#define DEAUTH_CAUTION_THRESHOLD       8
-#define DEAUTH_ALERT_THRESHOLD        20
-#define DEAUTH_BROADCAST_THRESHOLD     5
-#define MAX_DEAUTH_SOURCES            24
+#define DEAUTH_WINDOW_MS             5000
+#define DEAUTH_CAUTION_THRESHOLD        8
+#define DEAUTH_ALERT_THRESHOLD         20
+#define DEAUTH_BROADCAST_THRESHOLD      5
+#define MAX_DEAUTH_SOURCES             24
 
 // ── Probe request flood ───────────────────────────────────────
-// Counts 802.11 probe-request frames in a rolling window.
-// A sudden flood correlates with deauth attacks (clients scanning
-// for alternatives) or aggressive scanning tools.
 #define PROBE_WINDOW_MS           10000
 #define PROBE_CAUTION_THRESHOLD      40   // probes / 10 s → caution
 #define PROBE_ALERT_THRESHOLD        80   // probes / 10 s → alert
 
 // ── Pwnagotchi detector ───────────────────────────────────────
-// Pwnagotchi devices broadcast beacon frames from MAC de:ad:be:ef:de:ad.
-// The SSID is a JSON string containing device metadata including whether
-// the deauth attack policy is enabled.
 #define PWNA_SEEN_TIMEOUT_MS     60000   // forget pwnagotchi after 60 s quiet
-#define PWNA_QUEUE_SIZE              4
-#define PWNA_SSID_SNAP              96   // bytes of SSID to copy per event
-
-// ── WiFi Pineapple OUI ────────────────────────────────────────
-// Hak5 WiFi Pineapple devices use BSSIDs where bytes [1] and [2]
-// are 0x13 and 0x37 ("1337"). Detected via passive scan.
+#define PWNA_QUEUE_SIZE             4
+#define PWNA_SSID_SNAP             96   // bytes of SSID to copy per event
 
 // ── AP table ─────────────────────────────────────────────────
-#define MAX_APS                   96
-#define SSID_LEN                  33
+#define MAX_APS                    96
+#define SSID_LEN                   33
 
 // ── Beacon / SSID spam ────────────────────────────────────────
 #define SPAM_WINDOW_MS           30000
@@ -101,9 +91,9 @@ static const size_t  HOP_CHANNEL_COUNT = 3;
 #define RSSI_STRONGER_BY            10
 
 // ── Confidence scoring ────────────────────────────────────────
-#define SCORE_CAUTION               3
-#define SCORE_ALERT                 6
-#define SCORE_MAX                  20
+#define SCORE_CAUTION                3
+#define SCORE_ALERT                  6
+#define SCORE_MAX                   20
 #define SCORE_DECAY_INTERVAL_MS  60000
 #define SCORE_DECAY_AMOUNT           1
 
@@ -122,7 +112,7 @@ typedef enum : uint8_t {
     STATE_ALERT   = 3,
 } CanaryState;
 
-static CanaryState   g_state          = STATE_STARTUP;
+static CanaryState    g_state          = STATE_STARTUP;
 static unsigned long g_stateChangedAt = 0;
 
 // ============================================================
@@ -187,9 +177,6 @@ static DeauthSrc g_deauthSrc[MAX_DEAUTH_SOURCES];
 
 // ============================================================
 // PROBE REQUEST FLOOD
-// Counts 802.11 probe-request frames (subtype 4) in promiscuous
-// mode. A flood indicates aggressive scanning or post-deauth
-// client thrashing.
 // ============================================================
 
 static volatile uint32_t g_probeCount      = 0;
@@ -199,8 +186,6 @@ static unsigned long     g_probeWindowStart = 0;
 
 // ============================================================
 // PWNAGOTCHI DETECTION
-// Pwnagotchi transmits beacon frames from de:ad:be:ef:de:ad.
-// The SSID field carries JSON with name, version, policy.deauth.
 // ============================================================
 
 typedef struct {
@@ -220,7 +205,6 @@ static char          g_pwnaName[32] = "";
 static int8_t        g_pwnaRssi     = -100;
 static unsigned long g_pwnaLastSeen = 0;
 
-// Pwnagotchi's well-known fixed MAC address
 static const uint8_t PWNA_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
 
 // ============================================================
@@ -333,12 +317,6 @@ static uint8_t       g_curChannel = 1;
 static size_t        g_hopIdx     = 0;
 static unsigned long g_lastHop    = 0;
 
-// Promiscuous callback — IRAM, no Serial, no malloc, no blocking.
-// Handles four management frame subtypes:
-//   4  = probe request  → probe flood counter
-//   8  = beacon         → pwnagotchi check
-//   10 = disassociation → deauth queue
-//   12 = deauthentication → deauth queue
 static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (!buf || type != WIFI_PKT_MGMT) return;
 
@@ -355,7 +333,6 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
 
     if (ftype != 0) return;   // management frames only
 
-    // ── Probe request flood counter (subtype 4) ──────────────
     if (subtype == 4) {
         portENTER_CRITICAL_ISR(&g_probeMux);
         g_probeCount++;
@@ -363,8 +340,6 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
         return;
     }
 
-    // ── Pwnagotchi beacon detector (subtype 8) ────────────────
-    // Pwnagotchi beacons from de:ad:be:ef:de:ad; SSID = JSON payload
     if (subtype == 8) {
         if (hdr->addr2[0] == PWNA_MAC[0] &&
             hdr->addr2[1] == PWNA_MAC[1] &&
@@ -373,9 +348,8 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
             hdr->addr2[4] == PWNA_MAC[4] &&
             hdr->addr2[5] == PWNA_MAC[5]) {
 
-            // Beacon fixed fields: 12 bytes after the 24-byte MAC header
             int bodyOffset = (int)sizeof(ieee80211_hdr_t) + 12;
-            int bodyLen    = (int)pkt->rx_ctrl.sig_len - bodyOffset - 4; // strip FCS
+            int bodyLen    = (int)pkt->rx_ctrl.sig_len - bodyOffset - 4;
             if (bodyLen > 2) {
                 const uint8_t* body = pkt->payload + bodyOffset;
                 int rem = bodyLen;
@@ -405,7 +379,6 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
         return;
     }
 
-    // ── Deauth / disassoc (subtypes 10 and 12) ────────────────
     if (subtype != 10 && subtype != 12) return;
 
     portENTER_CRITICAL_ISR(&g_dqMux);
@@ -557,8 +530,6 @@ static void analyzeProbeFlood() {
 
 // ============================================================
 // PWNAGOTCHI DETECTION
-// Parse raw SSID bytes from the callback queue.
-// Avoids JSON library by using simple byte-pattern search.
 // ============================================================
 
 static const uint8_t* memfind(const uint8_t* hay, int hlen,
@@ -587,7 +558,6 @@ static void drainPwnaQueue() {
 
         if (dlen < 2 || data[0] != '{') continue;
 
-        // Extract name from "name":"VALUE"
         const uint8_t* nameToken = memfind(data, dlen, "\"name\":\"", 8);
         if (nameToken) {
             const uint8_t* nameStart = nameToken + 8;
@@ -599,7 +569,6 @@ static void drainPwnaQueue() {
             g_pwnaName[nameLen] = '\0';
         }
 
-        // Check for active deauth policy
         bool deauthOn = (memfind(data, dlen, "\"deauth\":true", 13) != nullptr);
 
         g_pwnaDetected = true;
@@ -642,14 +611,14 @@ static void analyzePwnagotchi() {
 
 static AuthStrength mapAuth(wifi_auth_mode_t m) {
     switch (m) {
-        case WIFI_AUTH_OPEN:            return AUTH_OPEN;
-        case WIFI_AUTH_WEP:             return AUTH_WEP;
-        case WIFI_AUTH_WPA_PSK:         return AUTH_WPA;
-        case WIFI_AUTH_WPA2_PSK:        return AUTH_WPA2;
-        case WIFI_AUTH_WPA_WPA2_PSK:    return AUTH_WPA2;
-        case WIFI_AUTH_WPA3_PSK:        return AUTH_WPA3;
+        case WIFI_AUTH_OPEN:             return AUTH_OPEN;
+        case WIFI_AUTH_WEP:              return AUTH_WEP;
+        case WIFI_AUTH_WPA_PSK:          return AUTH_WPA;
+        case WIFI_AUTH_WPA2_PSK:         return AUTH_WPA2;
+        case WIFI_AUTH_WPA_WPA2_PSK:     return AUTH_WPA2;
+        case WIFI_AUTH_WPA3_PSK:         return AUTH_WPA3;
         case WIFI_AUTH_WPA2_ENTERPRISE: return AUTH_WPA2E;
-        default:                        return AUTH_UNKNOWN;
+        default:                         return AUTH_UNKNOWN;
     }
 }
 
@@ -767,8 +736,6 @@ static void analyzeScanThreats(int scanCount) {
         char bssidBuf[18];
         macStr(bssid, bssidBuf);
 
-        // ── WiFi Pineapple OUI check ──────────────────────────
-        // Hak5 WiFi Pineapple uses "1337" hex in BSSID bytes [1:2]
         if (bssid[1] == 0x13 && bssid[2] == 0x37) {
             char reason[72];
             snprintf(reason, sizeof(reason),
@@ -791,10 +758,9 @@ static void analyzeScanThreats(int scanCount) {
         }
         if (!baseAP) continue;
 
-        // ── Open clone of known encrypted SSID ───────────────
         if (auth == AUTH_OPEN && baseAP->auth != AUTH_OPEN) {
             int pts = 3;
-            if (bssidIsNew)                              pts++;
+            if (bssidIsNew)                            pts++;
             if (rssi > baseAP->rssi + RSSI_STRONGER_BY) pts++;
             char reason[72];
             snprintf(reason, sizeof(reason),
@@ -806,7 +772,6 @@ static void analyzeScanThreats(int scanCount) {
             continue;
         }
 
-        // ── Security downgrade ────────────────────────────────
         if (baseAP->auth != AUTH_UNKNOWN && auth != AUTH_UNKNOWN &&
             auth != AUTH_OPEN &&
             authRank(auth) < authRank(baseAP->auth)) {
@@ -821,7 +786,6 @@ static void analyzeScanThreats(int scanCount) {
                           ssid, authStr(baseAP->auth), authStr(auth), bssidBuf);
         }
 
-        // ── Duplicate SSID with unexpected vendor OUI ─────────
         if (bssidIsNew && auth == baseAP->auth &&
             memcmp(baseAP->bssid, bssid, 3) != 0) {
             int pts = 1;
@@ -839,7 +803,6 @@ static void analyzeScanThreats(int scanCount) {
         }
     }
 
-    // ── Original encrypted AP absent + open clone present ────
     for (int j = 0; j < g_apCount; j++) {
         if (!g_aps[j].inBaseline)       continue;
         if (g_aps[j].auth == AUTH_OPEN) continue;
@@ -883,27 +846,26 @@ static void performScan(bool isBaseline) {
     for (int i = 0; i < n; i++) {
         uint8_t* bssid = WiFi.BSSID(i);
         if (!bssid) continue;
-        upsertAP(WiFi.SSID(i).c_str(), bssid,
-                 (int8_t)WiFi.RSSI(i),
-                 (uint8_t)WiFi.channel(i),
-                 mapAuth(WiFi.encryptionType(i)));
+        KnownAP* ap = upsertAP(WiFi.SSID(i).c_str(), bssid,
+                               (int8_t)WiFi.RSSI(i),
+                               (uint8_t)WiFi.channel(i),
+                               mapAuth(WiFi.encryptionType(i)));
+        if (isBaseline && ap) {
+            ap->inBaseline = true;
+        }
     }
 
     if (isBaseline) {
         g_baselineScansDone++;
         if (g_baselineScansDone >= BASELINE_SCANS) {
             g_baselineLearned = true;
-            for (int i = 0; i < g_apCount; i++) g_aps[i].inBaseline = true;
-            Serial.printf("[canary] baseline complete: %d APs\n", g_apCount);
+            g_state = STATE_NORMAL;
+            g_stateChangedAt = millis();
+            int baseCount = 0;
             for (int i = 0; i < g_apCount; i++) {
-                char b[18]; macStr(g_aps[i].bssid, b);
-                Serial.printf("  [%02d] %-32s %s ch%02u %-8s %d dBm\n",
-                              i, g_aps[i].ssid, b,
-                              g_aps[i].channel, authStr(g_aps[i].auth), g_aps[i].rssi);
+                if (g_aps[i].inBaseline) baseCount++;
             }
-        } else {
-            Serial.printf("[canary] baseline scan %d/%d\n",
-                          g_baselineScansDone, BASELINE_SCANS);
+            Serial.printf("[canary] BASELINE COMPLETE: %d APs registered\n", baseCount);
         }
     } else {
         updateSpamTracker(n);
@@ -915,156 +877,152 @@ static void performScan(bool isBaseline) {
 }
 
 // ============================================================
-// STATE UPDATE
+// STATE MACHINE & SYSTEM LOGIC
 // ============================================================
 
 static void updateState() {
-    CanaryState next;
+    CanaryState newState = g_state;
+
     if (!g_baselineLearned) {
-        next = STATE_STARTUP;
+        newState = STATE_STARTUP;
     } else if (g_score >= SCORE_ALERT) {
-        next = STATE_ALERT;
+        newState = STATE_ALERT;
     } else if (g_score >= SCORE_CAUTION) {
-        next = STATE_CAUTION;
+        newState = STATE_CAUTION;
     } else {
-        next = STATE_NORMAL;
+        newState = STATE_NORMAL;
     }
-    if (next != g_state) {
-        static const char* n[] = { "STARTUP","NORMAL","CAUTION","ALERT" };
-        Serial.printf("[canary] %s → %s  (score=%d  \"%s\")\n",
-                      n[g_state], n[next], g_score, g_scoreReason);
-        g_state = next;
+
+    if (newState != g_state) {
+        g_state = newState;
         g_stateChangedAt = millis();
+        Serial.printf("[canary] STATE CHANGE → %s (score=%d)\n",
+                      g_state == STATE_NORMAL  ? "NORMAL"  :
+                      g_state == STATE_CAUTION ? "CAUTION" :
+                      g_state == STATE_ALERT   ? "ALERT"   : "STARTUP",
+                      g_score);
     }
 }
 
-// ============================================================
-// HEARTBEAT
-// ============================================================
+static void checkButton() {
+    if (digitalRead(BUTTON_PIN) == LOW) {
+        delay(50); // Debounce
+        if (digitalRead(BUTTON_PIN) == LOW) {
+            Serial.println("[canary] Button pressed! Resetting baseline & confidence scores...");
+            g_apCount = 0;
+            g_score = 0;
+            g_baselineLearned = false;
+            g_baselineScansDone = 0;
+            g_state = STATE_STARTUP;
+            g_stateChangedAt = millis();
+            
+            // Fast flash blue to acknowledge reset
+            for (int i = 0; i < 3; i++) {
+                ledSetRGB(0, 0, 100); delay(100);
+                ledSetRGB(0, 0, 0);   delay(100);
+            }
+            while (digitalRead(BUTTON_PIN) == LOW) delay(10);
+        }
+    }
+}
 
 static unsigned long g_lastHeartbeat = 0;
 
 static void printHeartbeat() {
-    if (millis() - g_lastHeartbeat < HEARTBEAT_MS) return;
-    g_lastHeartbeat = millis();
-    static const char* n[] = { "STARTUP","NORMAL","CAUTION","ALERT" };
-    Serial.printf("[canary] hb: state=%s score=%d reason=\"%s\" "
-                  "aps=%d probes=%lu ch=%u pwna=%s\n",
-                  n[g_state], g_score, g_scoreReason,
-                  g_apCount, (unsigned long)g_probeSampled,
-                  g_curChannel,
-                  g_pwnaDetected ? (g_pwnaDeauth ? "ACTIVE" : "passive") : "none");
-}
+    unsigned long now = millis();
+    if (now - g_lastHeartbeat < HEARTBEAT_MS) return;
+    g_lastHeartbeat = now;
 
-// ============================================================
-// BUTTON — dump AP table + reset score
-// ============================================================
-
-static unsigned long g_btnLastMs    = 0;
-static bool          g_btnLastState = true;
-
-static void handleButton() {
-    bool pressed = (digitalRead(BUTTON_PIN) == LOW);
-    if (pressed && !g_btnLastState && (millis() - g_btnLastMs > 50)) {
-        Serial.println("[canary] button: AP table dump + score reset");
-        for (int i = 0; i < g_apCount; i++) {
-            char b[18]; macStr(g_aps[i].bssid, b);
-            Serial.printf("  ap[%02d] %-32s %s ch%02u %-8s %3d dBm %s\n",
-                          i, g_aps[i].ssid, b,
-                          g_aps[i].channel, authStr(g_aps[i].auth), g_aps[i].rssi,
-                          g_aps[i].inBaseline ? "[baseline]" : "");
-        }
-        if (g_pwnaDetected) {
-            Serial.printf("[canary] pwnagotchi: '%s' deauth=%s rssi=%d\n",
-                          g_pwnaName, g_pwnaDeauth ? "YES" : "no", g_pwnaRssi);
-        }
-        g_score = 0;
-        g_scoreReason[0] = '\0';
-        Serial.println("[canary] score reset to 0");
-        g_btnLastMs = millis();
+    int activeCount = 0;
+    for (int i = 0; i < g_apCount; i++) {
+        if (g_aps[i].activeScan) activeCount++;
     }
-    g_btnLastState = pressed;
+
+    Serial.printf("[heartbeat] uptime=%lud state=%s score=%d reason='%s' aps_total=%d active=%d\n",
+                  now / 1000,
+                  g_state == STATE_NORMAL  ? "NORMAL"  :
+                  g_state == STATE_CAUTION ? "CAUTION" :
+                  g_state == STATE_ALERT   ? "ALERT"   : "STARTUP",
+                  g_score,
+                  g_scoreReason[0] ? g_scoreReason : "none",
+                  g_apCount,
+                  activeCount);
 }
 
 // ============================================================
-// SETUP
+// MAIN SETUP AND LOOP
 // ============================================================
 
 void setup() {
     Serial.begin(115200);
     delay(500);
-    Serial.println();
-    Serial.println("================================");
-    Serial.println(" Travel WiFi Canary v1.1");
-    Serial.println(" Passive 2.4 GHz awareness");
-    Serial.println("================================");
+    Serial.println("\n[canary] --- Travel WiFi Canary Starting ---");
+
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
 
 #ifndef DEVKIT_LED
     pixel.begin();
     pixel.setBrightness(LED_DIM);
-    pixel.setPixelColor(0, pixel.Color(0, 0, 60));
     pixel.show();
 #else
     pinMode(DEVKIT_LED_PIN, OUTPUT);
-    digitalWrite(DEVKIT_LED_PIN, HIGH);
+    digitalWrite(DEVKIT_LED_PIN, LOW);
 #endif
 
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    memset((void*)g_deauthSrc, 0, sizeof(g_deauthSrc));
+    memset((void*)g_aps, 0, sizeof(g_aps));
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
 
-    memset(g_aps,       0, sizeof(g_aps));
-    memset(g_deauthSrc, 0, sizeof(g_deauthSrc));
-    memset(g_spamSSIDs, 0, sizeof(g_spamSSIDs));
-    memset(g_pwnaName,  0, sizeof(g_pwnaName));
+    g_state = STATE_STARTUP;
+    g_stateChangedAt = millis();
+    g_lastScan = millis() - BASELINE_SCAN_INTERVAL_MS; // Trigger immediate first scan
 
-    g_apCount           = 0;
-    g_baselineLearned   = false;
-    g_baselineScansDone = 0;
-    g_score             = 0;
-    g_pwnaDetected      = false;
-    g_probeWindowStart  = millis();
-    g_spamWindowStart   = millis();
-    g_lastDecay         = millis();
-    g_lastScan          = 0;
-    g_lastHeartbeat     = millis();
-    g_ledLastUpdate     = millis();
-
-    Serial.println("[canary] setup done — starting baseline learning");
+    promiscStart();
 }
-
-// ============================================================
-// LOOP
-// ============================================================
 
 void loop() {
     unsigned long now = millis();
 
+    // 1. Service visual indicator
     ledTick();
-    channelHop();
+
+    // 2. Process non-blocking hardware button
+    checkButton();
+
+    // 3. Process packet sniffing ring buffers
     drainDeauthQueue();
     drainPwnaQueue();
 
-    if (g_baselineLearned) {
-        analyzeDeauthSources();
-        analyzeProbeFlood();
-        analyzePwnagotchi();
-    }
+    // 4. Run detection engine evaluation routines
+    analyzeDeauthSources();
+    analyzeProbeFlood();
+    analyzePwnagotchi();
 
+    // 5. Channel hopping while sniffing
+    channelHop();
+
+    // 6. Natural score decay over time
     scoreDecay();
-    updateState();
-    printHeartbeat();
-    handleButton();
 
+    // 7. Update system threat level state
+    updateState();
+
+    // 8. Timed baseline acquisition and operational scanning
     if (!g_baselineLearned) {
-        if (now - g_lastScan >= BASELINE_SCAN_INTERVAL_MS)
+        if (now - g_lastScan >= BASELINE_SCAN_INTERVAL_MS) {
             performScan(true);
+        }
     } else {
-        if (now - g_lastScan >= SCAN_INTERVAL_MS)
+        if (now - g_lastScan >= SCAN_INTERVAL_MS) {
             performScan(false);
+        }
     }
 
-    delay(10);
+    // 9. Output periodic telemetry logs
+    printHeartbeat();
+
+    yield();
 }
