@@ -1,8 +1,8 @@
 # Travel WiFi Canary
 
-A compact, passive 2.4 GHz WiFi awareness sensor for the **M5Stack Atom Lite** (ESP32).
+A compact, passive 2.4 GHz WiFi awareness sensor for the **LilyGo T3 V1.6.1** (ESP32).
 
-Plug it in. It learns your environment. It watches quietly. The RGB LED tells you what it sees.
+Originally developed by SimeonOnSecurity. Updated for LilyGo by AirClick-Code.
 
 ---
 
